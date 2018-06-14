@@ -18,7 +18,6 @@ along with wyeb.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include <webkit2/webkit2.h>
-#include <JavaScriptCore/JSStringRef.h>
 #include <gdk/gdkx.h>
 
 //flock
@@ -1940,20 +1939,10 @@ static void jscb(GObject *po, GAsyncResult *pres, gpointer p)
 	gchar *resstr = NULL;
 	if (res)
 	{
-		JSValueRef jv = webkit_javascript_result_get_value(res);
-		JSGlobalContextRef jctx =
-			webkit_javascript_result_get_global_context(res);
+		JSCValue *jv = webkit_javascript_result_get_js_value(res);
 
-		if (JSValueIsString(jctx, jv))
-		{
-			JSStringRef jstr = JSValueToStringCopy(jctx, jv, NULL);
-			gsize len = JSStringGetMaximumUTF8CStringSize(jstr);
-			resstr = g_malloc(len);
-			JSStringGetUTF8CString(jstr, resstr, len);
-			JSStringRelease(jstr);
-		}
-		else
-			resstr = g_strdup("unsupported return value");
+		resstr = jsc_value_is_string(jv) ? jsc_value_to_string(jv)
+			: g_strdup("unsupported return value");
 
 		webkit_javascript_result_unref(res);
 	}
