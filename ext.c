@@ -97,10 +97,7 @@ typedef struct {
 	bool ok;
 	bool insight;
 	WebKitDOMElement *elm;
-#if NEWV
 	WebKitDOMClientRectList *rects;
-//	glong gap; //workaround
-#endif
 	glong fx;
 	glong fy;
 	glong x;
@@ -112,11 +109,9 @@ typedef struct {
 
 static void clearelm(Elm *elm)
 {
-#if NEWV
 	if (elm->rects)
 		g_object_unref(elm->rects);
 	elm->rects = NULL;
-#endif
 }
 
 static const gchar *clicktags[] = {
@@ -382,21 +377,6 @@ static Elm getrect(WebKitDOMElement *te)
 {
 	Elm elm = {0};
 
-#if ! NEWV
-	elm.h = webkit_dom_element_get_offset_height(te);
-	elm.w = webkit_dom_element_get_offset_width(te);
-
-	for (WebKitDOMElement *le = te; le;
-			le = webkit_dom_element_get_offset_parent(le))
-	{
-		elm.y +=
-			webkit_dom_element_get_offset_top(le) -
-			webkit_dom_element_get_scroll_top(le);
-		elm.x +=
-			webkit_dom_element_get_offset_left(le) -
-			webkit_dom_element_get_scroll_left(le);
-	}
-#else
 	elm.rects =
 		webkit_dom_element_get_client_rects(te);
 
@@ -411,7 +391,6 @@ static Elm getrect(WebKitDOMElement *te)
 	elm.w = webkit_dom_client_rect_get_width(rect);
 
 	g_object_unref(rect);
-#endif
 
 	return elm;
 }
@@ -551,7 +530,6 @@ static WebKitDOMElement *makehintelm(Page *page,
 		webkit_dom_element_get_attribute(elm->elm, "HREF") ?:
 		webkit_dom_element_get_attribute(elm->elm, "SRC");
 
-#if NEWV
 	WebKitDOMElement *ret = webkit_dom_document_create_element(doc, "div", NULL);
 	static const gchar *retstyle =
 		"position: absolute;"
@@ -594,14 +572,7 @@ static WebKitDOMElement *makehintelm(Page *page,
 		g_object_unref(hint);
 	}
 
-#else
-
-	ret = _makehintelm(page, doc, center,
-			elm->y + elm->fy + pagey,
-			elm->x + elm->fx + pagex, elm->h, elm->w, uri, text, len, true);
-#endif
 	g_free(uri);
-
 	return ret;
 }
 
@@ -695,27 +666,6 @@ static Elm checkelm(WebKitDOMDOMWindow *win, Elm *frect, Elm *prect,
 		goto retfalse;
 
 	ret.insight = true;
-
-#if ! NEWV
-	if (styleis(dec, "display", "inline"))
-	{
-		WebKitDOMElement *le = te;
-		while ((le = webkit_dom_node_get_parent_element((WebKitDOMNode *)le)))
-		{
-			WebKitDOMCSSStyleDeclaration *decp =
-				webkit_dom_dom_window_get_computed_style(win, le, NULL);
-			if (!styleis(decp, "display", "inline"))
-			{
-				Elm rectp = getrect(le);
-				glong nr = MIN(right, rectp.x + rectp.w);
-				ret.w += nr - right;
-				right = nr;
-				break;
-			}
-			g_object_unref(decp);
-		}
-	}
-#endif
 
 	gchar *zc = webkit_dom_css_style_declaration_get_property_value(dec, "z-index");
 	ret.zi = atoi(zc);
@@ -1144,7 +1094,7 @@ static bool makehint(Page *page, Coms type, gchar *hintkeys, gchar *ipkeys)
 				if (type == Cclick)
 				{
 					bool isi = isinput(te);
-#if NEWV
+
 					if (page->script && !isi)
 					{
 						WebKitDOMClientRect *rect =
@@ -1159,17 +1109,6 @@ static bool makehint(Page *page, Coms type, gchar *hintkeys, gchar *ipkeys)
 							x + elm->fx + w / 2.0 + 1.0,
 							y + elm->fy + h / 2.0 + 1.0
 						);
-#else
-					gchar *tag = webkit_dom_element_get_tag_name(te);
-					bool isa = !strcmp(tag, "A");
-					g_free(tag);
-
-					if (page->script && !isi && !isa)
-					{
-						gchar *arg = g_strdup_printf("%ld:%ld",
-								elm->x + elm->fx + elm->w / 2,
-								elm->y + elm->fy + 1);
-#endif
 						send(page, "click", arg);
 						g_free(arg);
 					}
