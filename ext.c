@@ -24,8 +24,9 @@ along with wyeb.  If not, see <http://www.gnu.org/licenses/>.
 
 typedef struct _WP {
 	WebKitWebPage *kit;
-	WebKitFrame   *mf;
 	guint64        id;
+
+	WebKitFrame   *mf;
 
 	GSList        *aplist;
 	let            apnode;
@@ -120,13 +121,14 @@ static JSCValue *tojsv(Page *page, void *dom)
 
 static JSCValue *pagejsv(Page *page, gchar *name)
 {
-	return jsc_context_get_value(webkit_frame_get_js_context(page->mf), name);
-}
-static JSCValue *swin(Page *page)
-{
-	static JSCValue *s = NULL;
-	if (s) g_object_unref(s);
-	return s = pagejsv(page, "window");
+//	static WebKitScriptWorld *world = NULL;
+//	if (!world)
+//		world = webkit_script_world_new();
+
+	return jsc_context_get_value(
+			webkit_frame_get_js_context(page->mf),
+//			webkit_frame_get_js_context_for_script_world(page->mf, world),
+			name);
 }
 static JSCValue *sdoc(Page *page)
 {
@@ -135,15 +137,17 @@ static JSCValue *sdoc(Page *page)
 	return s = pagejsv(page, "document");
 //	return s = tojsv(page, webkit_web_page_get_dom_document(page->kit));
 }
+static JSCValue *swin(Page *page)
+{
+	static JSCValue *s = NULL;
+	if (s) g_object_unref(s);
+	return s = pagejsv(page, "window");
+}
 
 
 #define invoker(...) jsc_value_object_invoke_method(__VA_ARGS__, G_TYPE_NONE)
 #define invoke(...) g_object_unref(invoker(__VA_ARGS__))
-#define isdef(v) (!jsc_value_is_undefined(v))
-
-#define tod(v) jsc_value_to_double(v)
-#define toi(v) jsc_value_to_int32(v)
-#define tos(v) jsc_value_to_string(v)
+#define isdef(v) (!jsc_value_is_undefined(v) && !jsc_value_is_null(v))
 
 #define aB(s) G_TYPE_BOOLEAN, s
 #define aL(s) G_TYPE_LONG, s
@@ -193,7 +197,7 @@ static gchar *props(let v, gchar *name)
 {
 	gchar *ret = NULL;
 	let retv = jsc_value_object_get_property(v, name);
-	if (isdef(retv) && !jsc_value_is_null(retv))
+	if (isdef(retv))
 		ret = jsc_value_to_string(retv);
 
 	g_object_unref(retv);
@@ -237,9 +241,16 @@ static let idx(let cl, int i)
 
 static void addlistener(let doc, gchar *name, void *func, void *data)
 {
+//this is disabled when javascript disabled
+//also data is only sent once
+//	let f = jsc_value_new_function(jsc_value_get_context(doc), NULL,
+//			func, data, NULL,
+//			G_TYPE_NONE, 1, JSC_TYPE_VALUE, JSC_TYPE_VALUE);
+//	invoke(doc, "addEventListener", aS(name), aJ(f));
+//	g_object_unref(f);
+
 	webkit_dom_event_target_add_event_listener(
-		WEBKIT_DOM_EVENT_TARGET((void *)webkit_dom_node_for_js_value(doc)),
-		name, func, false, data);
+		(void *)webkit_dom_node_for_js_value(doc), name, func, false, data);
 }
 
 
@@ -759,13 +770,10 @@ static void rmhint(Page *page)
 	g_object_unref(docelm);
 
 	for (GSList *next = page->aplist; next; next = next->next)
-	{
 		if (page->apnode == docelm)
 			invoke(page->apnode, "removeChild", aJ(next->data));
-		g_object_unref(next->data);
-	}
 
-	g_slist_free(page->aplist);
+	g_slist_free_full(page->aplist, g_object_unref);
 	g_object_unref(page->apnode);
 	g_free(page->apkeys);
 	page->aplist = NULL;
@@ -931,11 +939,9 @@ static bool eachclick(let win, let cl,
 	}
 	return ret;
 }
-static GSList *_makelist(Page *page, let doc,
+static GSList *_makelist(Page *page, let doc, let win,
 		Coms type, GSList *elms, Elm *frect, Elm *prect)
 {
-	let win = prop(doc, "defaultView");
-
 	const gchar **taglist = clicktags; //Cclick
 	if (type == Clink ) taglist = linktags;
 	if (type == Curi  ) taglist = uritags;
@@ -946,7 +952,7 @@ static GSList *_makelist(Page *page, let doc,
 	if (type == Cclick && page->script)
 	{
 		let body = prop(doc , "body");
-		let cl   = prop(body, "children");
+		let cl = prop(body, "children");
 		g_object_unref(body);
 		eachclick(win, cl, type, &elms, frect, prect);
 		g_object_unref(cl);
@@ -957,6 +963,7 @@ static GSList *_makelist(Page *page, let doc,
 		let te;
 		for (int j = 0; (te = idx(cl, j)); j++)
 		{
+
 			Elm elm = checkelm(win, frect, prect, te, false, false);
 			g_object_unref(te);
 
@@ -964,53 +971,61 @@ static GSList *_makelist(Page *page, let doc,
 			{
 				if (type == Ctext)
 				{
-					clearelm(&elm);
-					if (!isinput(te)) continue;
+					if (!isinput(elm.elm))
+					{
+						clearelm(&elm);
+						continue;
+					}
 
-					invoke(te, "focus");
+					invoke(elm.elm, "focus");
+					clearelm(&elm);
+
 					g_object_unref(win);
+					g_object_unref(cl);
 					return NULL;
 				}
 
 				addelm(&elm, &elms);
 			}
-
 		}
 		g_object_unref(cl);
 	}
-
-	g_object_unref(win);
 	return elms;
 }
 
-static GSList *makelist(Page *page, let doc, Coms type,
-		Elm *frect, GSList *elms)
+static GSList *makelist(Page *page, let doc, let win,
+		Coms type, Elm *frect, GSList *elms)
 {
 	Elm frectr = {0};
 	if (!frect)
 	{
-		let win = prop(doc, "defaultView");
 		frectr.w = propd(win, "innerWidth");
 		frectr.h = propd(win, "innerHeight");
 		frect = &frectr;
-		g_object_unref(win);
 	}
 	Elm prect = *frect;
 	prect.x = prect.y = 0;
 
 	//D(rect %d %d %d %d, rect.y, rect.x, rect.h, rect.w)
-	elms = _makelist(page, doc, type, elms, frect, &prect);
+	elms = _makelist(page, doc, win, type, elms, frect, &prect);
 
 	let cl = invoker(doc, "getElementsByTagName", aS("IFRAME"));
 	let te;
 	for (int j = 0; (te = idx(cl, j)); j++)
 	{
-		let fdoc = prop(te, "contentDocument");
+//some times can't get content
+//		let fdoc = prop(te, "contentDocument");
+//		if (!fdoc) continue;
+		WebKitDOMHTMLIFrameElement *tfe = (void *)webkit_dom_node_for_js_value(te);
+		let fdoc = webkit_frame_get_js_value_for_dom_object(page->mf,
+			(void *)webkit_dom_html_iframe_element_get_content_document(tfe));
 
-		let fwin = prop(te, "contentWindow");
-		Elm cfrect = checkelm(fwin, frect, &prect, te, false, false);
-		g_object_unref(fwin);
+//fwin can't get style vals
+//		let fwin = prop(fdoc, "defaultView");
+//		let fwin = prop(te, "contentWindow");
 
+//		Elm cfrect = checkelm(fwin, frect, &prect, te, false, false);
+		Elm cfrect = checkelm(win, frect, &prect, te, false, false);
 		if (cfrect.ok)
 		{
 			double cx = propd(te, "clientLeft");
@@ -1024,14 +1039,15 @@ static GSList *makelist(Page *page, let doc, Coms type,
 			cfrect.fx += cfrect.x + cx;
 			cfrect.fy += cfrect.y + cy;
 			cfrect.x = cfrect.y = 0;
-			elms = makelist(page, fdoc, type, &cfrect, elms);
+//			elms = makelist(page, fdoc, fwin, type, &cfrect, elms);
+			elms = makelist(page, fdoc, win, type, &cfrect, elms);
 		}
 
 		clearelm(&cfrect);
+//		g_object_unref(fwin);
 		g_object_unref(fdoc);
 		g_object_unref(te);
 	}
-
 	g_object_unref(cl);
 
 	return elms;
@@ -1145,7 +1161,7 @@ static bool makehint(Page *page, Coms type, gchar *hintkeys, gchar *ipkeys)
 	double pagex = propd(win, "scrollX");
 	double pagey = propd(win, "scrollY");
 
-	GSList *elms = makelist(page, doc, type, NULL, NULL);
+	GSList *elms = makelist(page, doc, win, type, NULL, NULL);
 	guint tnum = g_slist_length(elms);
 
 	page->apnode = prop(doc, "documentElement");
@@ -1327,7 +1343,7 @@ static bool makehint(Page *page, Coms type, gchar *hintkeys, gchar *ipkeys)
 
 
 //@context
-static void domfocusincb(WebKitDOMDOMWindow *w, WebKitDOMEvent *e, Page *page)
+static void domfocusincb(let w, let e, Page *page)
 {
 	let doc = sdoc(page);
 	let te = prop(doc, "activeElement");
@@ -1341,9 +1357,9 @@ static void domfocusincb(WebKitDOMDOMWindow *w, WebKitDOMEvent *e, Page *page)
 	g_free(uri);
 	g_object_unref(te);
 }
-static void domfocusoutcb(WebKitDOMDOMWindow *w, WebKitDOMEvent *ev, Page *page)
+static void domfocusoutcb(let w, let e, Page *page)
 { send(page, "_focusuri", NULL); }
-//static void domactivatecb(WebKitDOMDOMWindow *w, WebKitDOMEvent *ev, Page *page)
+//static void domactivatecb(Page *page)
 //{ DD(domactivate!) }
 
 static void rmtags(let doc, gchar *name)
@@ -1366,16 +1382,16 @@ static void rmtags(let doc, gchar *name)
 	g_slist_free(rms);
 	g_object_unref(cl);
 }
-static void domloadcb(WebKitDOMDOMWindow *w, WebKitDOMEvent *ev, let doc)
+static void domloadcb(let w, let e, let doc)
 {
 	rmtags(doc, "NOSCRIPT");
 }
-static void hintcb(WebKitDOMDOMWindow *w, WebKitDOMEvent *ev, Page *page)
+static void hintcb(let w, let e, Page *page)
 {
 	if (page->apnode)
 		makehint(page, page->lasttype, NULL, NULL);
 }
-static void unloadcb(WebKitDOMDOMWindow *w, WebKitDOMEvent *ev, Page *page)
+static void unloadcb(let w, let e, Page *page)
 {
 	rmhint(page);
 }
@@ -1595,7 +1611,7 @@ void ipccb(const gchar *line)
 		break;
 	case Ctext:
 	{
-		makelist(page, sdoc(page), Ctext, NULL, NULL);
+		makelist(page, sdoc(page), swin(page), Ctext, NULL, NULL);
 		break;
 	}
 	case Crm:
