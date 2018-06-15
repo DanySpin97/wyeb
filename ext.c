@@ -328,7 +328,7 @@ static bool isinput(let te)
 			return true;
 		}
 
-		gchar *type = props(te, "type");
+		gchar *type = attr(te, "TYPE");
 		if (!type || !isins(inottext, type))
 			ret = true;
 		g_free(type);
