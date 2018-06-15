@@ -1006,6 +1006,9 @@ static void settitle(Win *win, const gchar *pstr)
 	bool bar = getsetbool(win, "addressbar");
 	const gchar *wtitle = webkit_web_view_get_title(win->kit) ?: "";
 	gchar *title = pstr && !bar ? NULL : g_strconcat(
+#if DEBUG
+		"#",
+#endif
 		win->tlserr ? "!TLS " : "",
 		suffix            , *suffix      ? "| " : "",
 		win->overset ?: "", win->overset ? "| " : "",
@@ -1939,10 +1942,8 @@ static void jscb(GObject *po, GAsyncResult *pres, gpointer p)
 	gchar *resstr = NULL;
 	if (res)
 	{
-		JSCValue *jv = webkit_javascript_result_get_js_value(res);
-
-		resstr = jsc_value_is_string(jv) ? jsc_value_to_string(jv)
-			: g_strdup("unsupported return value");
+		resstr = jsc_value_to_string(
+				webkit_javascript_result_get_js_value(res));
 
 		webkit_javascript_result_unref(res);
 	}
