@@ -293,6 +293,7 @@ static char *path2conf(const char *name)
 			g_get_user_config_dir(), fullname, name, NULL);
 }
 
+
 static bool setprop(WP *wp, GKeyFile *kf, char *group, char *key)
 {
 	if (!g_key_file_has_key(kf, group, key, NULL)) return false;
